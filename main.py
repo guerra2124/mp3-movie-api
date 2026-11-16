@@ -5,6 +5,7 @@ import pandas as pd
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from src import (
     HealthResponse,
+    MovieCache,
     MovieDataResponse,
     MovieProcessingReport,
     MovieStorage,
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Data Processing API", version="1.0.0")
 app.middleware("http")(log_requests)
 storage = MovieStorage()
+cache = MovieCache()
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -65,6 +67,7 @@ async def upload_movies(file: UploadFile = File(...)):
     df = df[MOVIE_COLUMNS]
 
     storage.save(df)
+    cache.invalidate()
     logger.info(f"Uploaded movies: filename={file.filename}, rows={len(df)}")
     return {
         "filename": file.filename,
@@ -73,14 +76,21 @@ async def upload_movies(file: UploadFile = File(...)):
         "column_names": list(df.columns),
     }
 
-
 @app.get("/movies", response_model=MovieDataResponse)
 def get_movies(limit: int = Query(default=100, ge=1)):
-    """Return up to limit stored movies and the total count."""
+    """Return up to limit stored movies and the total count, using the cache."""
+    cached = cache.get(limit)
+    if cached is not None:
+        logger.info(f"Cache hit for movies: limit={limit}")
+        return cached
+
     data = storage.select_columns(MOVIE_COLUMNS, limit)
     total_rows = storage.count_movies()
+    response = {"data": data, "total_rows": total_rows}
+
+    cache.set(limit, response)
     logger.info(f"Retrieved movies: returned_rows={len(data)}, total_rows={total_rows}")
-    return {"data": data, "total_rows": total_rows}
+    return response
 
 @app.get("/movies/search", response_model=list[dict])
 def query_movies(
@@ -138,6 +148,7 @@ def process_movies(config: ProcessConfig):
         raise HTTPException(status_code=400, detail=str(error)) from error
 
     storage.save(processed)
+    cache.invalidate()
     logger.info(
         f"Processed movies: "
         f"validation_removed={validation_rows_removed}, "

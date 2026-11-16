@@ -4,7 +4,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 import main
-from src import MovieStorage
+from src import (
+    MovieStorage,
+    MovieCache,
+)
 
 
 @pytest.fixture
@@ -15,6 +18,7 @@ def test_storage(tmp_path):
 @pytest.fixture
 def client(test_storage, monkeypatch):
     monkeypatch.setattr(main, "storage", test_storage)
+    monkeypatch.setattr(main, "cache", MovieCache())
     with TestClient(main.app) as test_client:
         yield test_client
 
